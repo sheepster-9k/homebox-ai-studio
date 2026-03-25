@@ -23,6 +23,13 @@ mcp = FastMCP(
 hb = HomeboxClient()
 
 
+# ── Parsing helpers ──────────────────────────────────────────────────
+
+def _parse_csv_ids(s: str) -> list[str]:
+    """Split a comma-separated string of IDs, stripping whitespace."""
+    return [t.strip() for t in s.split(",") if t.strip()]
+
+
 # ── Formatting helpers ───────────────────────────────────────────────
 
 def _fmt_item_summary(item: dict) -> str:
@@ -146,7 +153,7 @@ async def search_items(
     """
     try:
         loc_ids = [location_id] if location_id else None
-        t_ids = [t.strip() for t in tag_ids.split(",") if t.strip()] if tag_ids else None
+        t_ids = _parse_csv_ids(tag_ids) if tag_ids else None
         data = await hb.search_items(
             query=query,
             location_ids=loc_ids,
@@ -216,7 +223,7 @@ async def create_item(
         if location_id:
             payload["locationId"] = location_id
         if tag_ids:
-            payload["tagIds"] = [t.strip() for t in tag_ids.split(",") if t.strip()]
+            payload["tagIds"] = _parse_csv_ids(tag_ids)
 
         item = await hb.create_item(payload)
         return f"Item created successfully.\n\n{_fmt_item_detail(item)}"
@@ -232,11 +239,11 @@ async def update_item(
     name: str = "",
     description: str = "",
     location_id: str = "",
-    quantity: int = -1,
+    quantity: int | None = None,
     manufacturer: str = "",
     model_number: str = "",
     serial_number: str = "",
-    purchase_price: float = -1,
+    purchase_price: float | None = None,
     notes: str = "",
 ) -> str:
     """Update an item (merge-style: only changed fields are modified).
@@ -246,11 +253,11 @@ async def update_item(
         name: New name (leave empty to keep current).
         description: New description (leave empty to keep current).
         location_id: New location UUID (leave empty to keep current).
-        quantity: New quantity (-1 to keep current).
+        quantity: New quantity (omit to keep current).
         manufacturer: Manufacturer name.
         model_number: Model number.
         serial_number: Serial number.
-        purchase_price: Price paid (-1 to keep current).
+        purchase_price: Price paid (omit to keep current).
         notes: Notes text.
     """
     try:
@@ -304,7 +311,7 @@ async def update_item(
             update["description"] = description
         if location_id:
             update["locationId"] = location_id
-        if quantity >= 0:
+        if quantity is not None:
             update["quantity"] = quantity
         if manufacturer:
             update["manufacturer"] = manufacturer
@@ -312,7 +319,7 @@ async def update_item(
             update["modelNumber"] = model_number
         if serial_number:
             update["serialNumber"] = serial_number
-        if purchase_price >= 0:
+        if purchase_price is not None:
             update["purchasePrice"] = purchase_price
         if notes:
             update["notes"] = notes
@@ -536,7 +543,7 @@ async def tag_item(item_id: str, tag_ids: str) -> str:
     """
     try:
         current = await hb.get_item(item_id)
-        parsed_tags = [t.strip() for t in tag_ids.split(",") if t.strip()]
+        parsed_tags = _parse_csv_ids(tag_ids)
 
         patch_data = {
             "id": item_id,

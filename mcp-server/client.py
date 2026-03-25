@@ -6,7 +6,7 @@ import httpx
 import os
 from typing import Any
 
-HOMEBOX_URL = os.environ.get("HOMEBOX_URL", "http://192.168.42.99:3100")
+HOMEBOX_URL = os.environ.get("HOMEBOX_URL", "http://localhost:3100")
 HOMEBOX_TOKEN = os.environ.get("HOMEBOX_TOKEN", "")
 HOMEBOX_USERNAME = os.environ.get("HOMEBOX_USERNAME", "")
 HOMEBOX_PASSWORD = os.environ.get("HOMEBOX_PASSWORD", "")
@@ -42,6 +42,13 @@ class HomeboxClient:
         self.username = username or HOMEBOX_USERNAME
         self.password = password or HOMEBOX_PASSWORD
         self.timeout = timeout
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """Return existing httpx client or create a new one (lazy-init)."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=self.timeout)
+        return self._client
 
     async def _ensure_token(self) -> None:
         """Auto-login if credentials are set and token is empty/expired."""
@@ -49,14 +56,14 @@ class HomeboxClient:
             return
         if not self.username or not self.password:
             return
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.post(
-                f"{self.base_url}/api/v1/users/login",
-                json={"username": self.username, "password": self.password},
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                self.token = data.get("token", "").removeprefix("Bearer ").strip()
+        client = self._get_client()
+        resp = await client.post(
+            f"{self.base_url}/api/v1/users/login",
+            json={"username": self.username, "password": self.password},
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            self.token = data.get("token", "").removeprefix("Bearer ").strip()
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Content-Type": "application/json"}
@@ -77,19 +84,18 @@ class HomeboxClient:
         """
         await self._ensure_token()
         url = f"{self.base_url}/api/v1{path}"
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            resp = await client.request(
-                method, url, headers=self._headers(), json=json, params=params,
-            )
+        client = self._get_client()
+        resp = await client.request(
+            method, url, headers=self._headers(), json=json, params=params,
+        )
 
         # Auto-refresh on 401
         if resp.status_code == 401 and self.username and self.password:
             self.token = ""
             await self._ensure_token()
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.request(
-                    method, url, headers=self._headers(), json=json, params=params,
-                )
+            resp = await client.request(
+                method, url, headers=self._headers(), json=json, params=params,
+            )
 
         if resp.status_code >= 400:
             try:

@@ -1,0 +1,61 @@
+# Homebox AI Studio — Full Stack Deployment
+#
+# Usage:
+#   docker compose -f docker-compose.studio.yml up -d
+#
+# Prerequisites:
+#   - Build the Homebox fork image first:
+#     cd /path/to/homebox-fork
+#     docker build --build-arg NUXT_PUBLIC_HBC_URL=/hbc -t sheepster-9k/homebox:latest .
+#
+# Environment:
+#   Copy .env.example to .env and configure your settings.
+
+services:
+  # Homebox — forked with AI Companion + Studio
+  homebox:
+    image: sheepster-9k/homebox:latest
+    container_name: homebox
+    restart: always
+    environment:
+      - HBOX_LOG_LEVEL=info
+      - HBOX_LOG_FORMAT=text
+      - HBOX_WEB_MAX_FILE_UPLOAD=10
+      - HBOX_OPTIONS_ALLOW_ANALYTICS=false
+      # OIDC (optional — remove if not using SSO)
+      - HBOX_OIDC_ENABLED=${HBOX_OIDC_ENABLED:-false}
+      - HBOX_OIDC_CLIENT_ID=${HBOX_OIDC_CLIENT_ID:-}
+      - HBOX_OIDC_CLIENT_SECRET=${HBOX_OIDC_CLIENT_SECRET:-}
+      - HBOX_OIDC_ISSUER_URL=${HBOX_OIDC_ISSUER_URL:-}
+      - HBOX_OIDC_REDIRECT_URL=${HBOX_OIDC_REDIRECT_URL:-}
+      - HBOX_OIDC_SCOPES=${HBOX_OIDC_SCOPES:-openid,email,profile}
+      - HBOX_OIDC_AUTO_REGISTER=${HBOX_OIDC_AUTO_REGISTER:-true}
+    volumes:
+      - homebox-data:/data/
+    ports:
+      - "${HOMEBOX_PORT:-3100}:7745"
+    depends_on:
+      - hbc
+
+  # Homebox Companion — AI sidecar (auth-free internal)
+  hbc:
+    image: ghcr.io/duelion/homebox-companion:latest
+    container_name: hbc-internal
+    restart: always
+    environment:
+      - HBC_LLM_API_KEY=${HBC_LLM_API_KEY:-local}
+      - HBC_LLM_API_BASE=${HBC_LLM_API_BASE:-http://localhost:11434}
+      - HBC_LLM_MODEL=${HBC_LLM_MODEL:-gpt-4o-mini}
+      - HBC_LLM_ALLOW_UNSAFE_MODELS=${HBC_LLM_ALLOW_UNSAFE_MODELS:-false}
+      - HBC_HOMEBOX_URL=http://homebox:7745
+      - HBC_TS_AUTH_USERNAME=${HBC_AUTH_USERNAME:-}
+      - HBC_TS_AUTH_PASSWORD=${HBC_AUTH_PASSWORD:-}
+      - HBC_TS_AUTH_HOMEBOX_URL=http://homebox:7745
+    volumes:
+      - ./patches:/patches:ro
+    entrypoint: ["/bin/bash", "-c", "cd /app && uv pip install -e . && /patches/apply_patches.sh && exec uv run python -m server.app"]
+    # Internal only — no external port. Accessed via reverse proxy at /hbc/
+
+volumes:
+  homebox-data:
+    driver: local

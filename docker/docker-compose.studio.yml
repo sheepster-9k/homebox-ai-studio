@@ -56,6 +56,18 @@ services:
     entrypoint: ["/bin/bash", "-c", "cd /app && uv pip install -e . && /patches/apply_patches.sh && exec uv run python -m server.app"]
     # Internal only — no external port. Accessed via reverse proxy at /hbc/
 
+  # Homebox MCP Server — exposes inventory API as MCP tools for AI agents
+  homebox-mcp:
+    build: ../mcp-server
+    container_name: homebox-mcp
+    restart: always
+    environment:
+      - HOMEBOX_URL=http://homebox:7745
+      - HOMEBOX_TOKEN=${HOMEBOX_MCP_TOKEN}
+    stdin_open: true
+    depends_on:
+      - homebox
+
 volumes:
   homebox-data:
     driver: local

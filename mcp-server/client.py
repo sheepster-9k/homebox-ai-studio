@@ -8,6 +8,8 @@ from typing import Any
 
 HOMEBOX_URL = os.environ.get("HOMEBOX_URL", "http://192.168.42.99:3100")
 HOMEBOX_TOKEN = os.environ.get("HOMEBOX_TOKEN", "")
+HOMEBOX_USERNAME = os.environ.get("HOMEBOX_USERNAME", "")
+HOMEBOX_PASSWORD = os.environ.get("HOMEBOX_PASSWORD", "")
 
 
 class HomeboxError(Exception):
@@ -20,17 +22,41 @@ class HomeboxError(Exception):
 
 
 class HomeboxClient:
-    """Async client for the Homebox REST API (v1)."""
+    """Async client for the Homebox REST API (v1).
+
+    Supports two auth modes:
+    1. Token-based: set HOMEBOX_TOKEN env var (expires in 7 days)
+    2. Credential-based: set HOMEBOX_USERNAME + HOMEBOX_PASSWORD (auto-refreshes)
+    """
 
     def __init__(
         self,
         base_url: str | None = None,
         token: str | None = None,
+        username: str | None = None,
+        password: str | None = None,
         timeout: float = 30.0,
     ):
         self.base_url = (base_url or HOMEBOX_URL).rstrip("/")
         self.token = token or HOMEBOX_TOKEN
+        self.username = username or HOMEBOX_USERNAME
+        self.password = password or HOMEBOX_PASSWORD
         self.timeout = timeout
+
+    async def _ensure_token(self) -> None:
+        """Auto-login if credentials are set and token is empty/expired."""
+        if self.token:
+            return
+        if not self.username or not self.password:
+            return
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            resp = await client.post(
+                f"{self.base_url}/api/v1/users/login",
+                json={"username": self.username, "password": self.password},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                self.token = data.get("token", "").removeprefix("Bearer ").strip()
 
     def _headers(self) -> dict[str, str]:
         h: dict[str, str] = {"Content-Type": "application/json"}
@@ -47,18 +73,24 @@ class HomeboxClient:
     ) -> Any:
         """Execute an HTTP request against the Homebox API.
 
-        Returns the parsed JSON response body.  For 204 No Content
-        responses (e.g. DELETE), returns None.
+        Auto-refreshes token on 401 if credentials are configured.
         """
+        await self._ensure_token()
         url = f"{self.base_url}/api/v1{path}"
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             resp = await client.request(
-                method,
-                url,
-                headers=self._headers(),
-                json=json,
-                params=params,
+                method, url, headers=self._headers(), json=json, params=params,
             )
+
+        # Auto-refresh on 401
+        if resp.status_code == 401 and self.username and self.password:
+            self.token = ""
+            await self._ensure_token()
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.request(
+                    method, url, headers=self._headers(), json=json, params=params,
+                )
+
         if resp.status_code >= 400:
             try:
                 detail = resp.json()
